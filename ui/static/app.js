@@ -219,7 +219,7 @@ async function enterApp(identity) {
 $("#login-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const message = $("#login-message");
-  showMessage(message, "Connecting to Oracle…");
+  showMessage(message, "Connecting to PostgreSQL…");
   const submit = event.currentTarget.querySelector("button[type=submit]");
   submit.disabled = true;
   try {
