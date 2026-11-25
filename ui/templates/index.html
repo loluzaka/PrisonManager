@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Prison Operations | Control Desk</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script src="{{ url_for('static', filename='realtime.js') }}" defer></script>
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
 <body>
@@ -29,7 +30,7 @@
         <button class="button button-primary full-width" type="submit">Connect securely <span>→</span></button>
         <p class="form-message" id="login-message" role="status"></p>
       </form>
-      <p class="login-foot">Oracle Autonomous Database · Wallet TLS · Credentials are never saved in this browser.</p>
+      <p class="login-foot">PostgreSQL on Neon · TLS encrypted · Credentials are never saved in this browser.</p>
     </section>
   </div>
 
@@ -48,7 +49,7 @@
         <button class="nav-item" data-view="booking" id="nav-booking"><span class="nav-icon">＋</span>Book a visit</button>
       </nav>
       <div class="sidebar-bottom">
-        <div class="secure-chip"><span class="live-dot"></span><span>Encrypted session <small>Wallet connection</small></span></div>
+        <div class="secure-chip"><span class="live-dot"></span><span>Encrypted session <small>Neon PostgreSQL</small></span></div>
         <div class="profile">
           <div class="avatar" id="user-avatar">FD</div>
           <div class="profile-info"><strong id="user-name">Front desk</strong><small id="user-role">ROLE</small></div>
@@ -84,7 +85,7 @@
             </article>
             <article class="panel panel-side">
               <div class="panel-heading"><div><p class="eyebrow">SYSTEM STATUS</p><h2>Connection</h2></div><span class="live-dot"></span></div>
-              <div class="status-card"><div class="status-title"><span class="live-dot"></span>Oracle cloud active</div><p>Connected using the assigned role and secure wallet.</p><div class="status-divider"></div><small>DATABASE USER</small><strong id="connection-user">—</strong></div>
+              <div class="status-card"><div class="status-title"><span class="live-dot"></span>Neon services</div><p>PostgreSQL is connected through your assigned role.</p><div class="status-divider"></div><small>DATABASE USER</small><strong id="connection-user">—</strong><div class="status-divider"></div><small>REALTIME VISIT FEED</small><strong id="realtime-status">Starting…</strong><button class="button button-outline storage-check hidden" id="storage-check">Test private object storage</button><p class="form-message" id="storage-message" role="status"></p></div>
               <div class="tip-card"><span class="tip-icon">✦</span><div><strong>Access is role-based</strong><p>Data and actions are limited by your database grants and facility assignment.</p></div></div>
             </article>
           </div>
@@ -120,7 +121,7 @@
               <button class="button button-primary" type="submit">Check &amp; book visit <span>→</span></button>
               <div class="form-message booking-message" id="booking-message" role="status"></div>
             </form>
-            <div class="notice"><strong>Database-enforced booking</strong><p>Submission calls <code>SP_SCHEDULE_VISIT</code>. Invalid bookings are rejected and logged by the database.</p></div>
+            <div class="notice"><strong>Database-enforced booking</strong><p>Submission calls <code>fn_schedule_visit</code>. Invalid bookings are rejected and logged by the database.</p></div>
           </article>
         </section>
         <footer class="footer">PRISON MANAGEMENT SYSTEM <span>•</span> DATABASE RULES ENFORCED AT SOURCE</footer>

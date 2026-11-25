@@ -1,5 +1,5 @@
 const $ = (selector) => document.querySelector(selector);
-const state = { csrf: "", role: "", username: "", inmatePage: 1, visitsPage: 1 };
+const state = { csrf: "", role: "", username: "", inmatePage: 1, visitsPage: 1, stopRealtime: null };
 
 const roleLabels = {
   admin: "Administrator",
@@ -72,8 +72,8 @@ async function loadHealth() {
   try {
     const result = await api("/api/health");
     note.textContent = result.configured
-      ? "Wallet found. Sign in with an assigned database role."
-      : "Cloud wallet/config not found. Configure .env and the wallet folder first.";
+      ? "PostgreSQL configured. Sign in with an assigned database role."
+      : "PostgreSQL is not configured. See the Neon setup instructions.";
     note.classList.toggle("ready", result.configured);
   } catch {
     note.textContent = "Could not check cloud configuration.";
@@ -89,6 +89,7 @@ function setRoleAccess(role) {
   $("#nav-booking").classList.toggle("hidden", !showBooking);
   $("#stat-inmates-card").classList.toggle("hidden", !showRoster);
   $("#stat-blocks-card").classList.toggle("hidden", !showRoster);
+  $("#storage-check").classList.toggle("hidden", role !== "admin");
 }
 
 function openView(name) {
@@ -165,6 +166,34 @@ async function loadVisitors() {
   ]);
 }
 
+async function connectLiveVisits() {
+  const status = $("#realtime-status");
+  status.textContent = "Connecting…";
+  try {
+    state.stopRealtime = await window.NeonRealtime.connect({
+      csrf: state.csrf,
+      onRows(rows) {
+        setTableRows("#today-table", rows, [
+          { key: "slot" },
+          { key: "inmate_name", kind: "name" },
+          { key: "visitor_name" },
+          { key: "block_name" },
+          { key: "status", kind: "badge" },
+        ]);
+        $("#stat-today").textContent = rows.length;
+      },
+      onStatus(value) {
+        status.textContent = value === "live" ? "Live" : value;
+      },
+      onError() {
+        status.textContent = "Unavailable";
+      },
+    });
+  } catch {
+    status.textContent = "Unavailable";
+  }
+}
+
 async function enterApp(identity) {
   state.csrf = identity.csrf;
   state.role = identity.role;
@@ -184,6 +213,7 @@ async function enterApp(identity) {
   } catch (error) {
     showAlert(error.message);
   }
+  await connectLiveVisits();
 }
 
 $("#login-form").addEventListener("submit", async (event) => {
@@ -239,9 +269,25 @@ $("#booking-form").addEventListener("submit", async (event) => {
 
 $("#logout-button").addEventListener("click", async () => {
   try {
+    state.stopRealtime?.();
     await api("/api/logout", { method: "POST", body: "{}" });
   } finally {
     window.location.reload();
+  }
+});
+
+$("#storage-check").addEventListener("click", async () => {
+  const button = $("#storage-check");
+  const message = $("#storage-message");
+  button.disabled = true;
+  showMessage(message, "Testing private upload, download, and cleanup…");
+  try {
+    const result = await api("/api/storage/check", { method: "POST", body: "{}" });
+    showMessage(message, result.message, true);
+  } catch (error) {
+    showMessage(message, error.message);
+  } finally {
+    button.disabled = false;
   }
 });
 

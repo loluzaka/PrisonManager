@@ -33,7 +33,32 @@ POSTGRES_URL=postgresql://<host>/<database>?sslmode=require
 
 For local development, set `POSTGRES_URL=postgresql://localhost:5432/prison_db`. The UI overrides the URL's user and password with the selected role login and password entered on the sign-in screen. Keep the URL's TLS option (`sslmode=require`) for hosted databases.
 
-## 3. Install locally or in the cloud
+With Neon, the CLI-managed `DATABASE_URL` and `DATABASE_URL_UNPOOLED` are sufficient; the app and cloud scripts use them as fallbacks. You do not need to copy connection strings into `POSTGRES_URL` or `POSTGRES_ADMIN_URL`.
+
+## 3. Provision and build the Neon services
+
+The Neon-linked repository declares the `uploads` private bucket, Realtime, and the `hello` Function in `neon.ts`. After `neon init` has linked the intended project and branch, pull managed settings and apply the configuration:
+
+```powershell
+neon env pull
+npm.cmd install
+npm.cmd run build
+```
+
+Keep the server-only `PRISON_APP_API_KEY` in `.env`; it protects the Function endpoint used to seal facility-scoped Realtime queries. The Function also needs the managed `NEON_REALTIME_SECRET`, which `neon.ts` maps to its own server-only `PRISON_REALTIME_SECRET` variable. Neither secret belongs in browser code or Git.
+
+Export those two source values for the deployment command, without printing them:
+
+```powershell
+$env:PRISON_APP_API_KEY = (Get-Content .env | Where-Object { $_ -match '^PRISON_APP_API_KEY=' } | Select-Object -Last 1).Substring('PRISON_APP_API_KEY='.Length)
+$env:NEON_REALTIME_SECRET = (Get-Content .env | Where-Object { $_ -match '^NEON_REALTIME_SECRET=' } | Select-Object -Last 1).Substring('NEON_REALTIME_SECRET='.Length)
+try { neon deploy --env .env }
+finally { Remove-Item Env:PRISON_APP_API_KEY, Env:NEON_REALTIME_SECRET -ErrorAction SilentlyContinue }
+```
+
+The Flask app uses the pooled `DATABASE_URL` for normal requests. Use `DATABASE_URL_UNPOOLED` for schema installation and migrations. The UI's Realtime subscription requests a sealed query through Flask after login; the private-storage check is an administrator-only upload/download/delete round trip.
+
+## 4. Install locally or in the cloud
 
 Docker Desktop is used to run a local PostgreSQL container; it also supplies `psql` for deployment. Start the container:
 
@@ -53,9 +78,9 @@ Install into the configured cloud database:
 .\scripts\install_postgres.ps1 -Cloud
 ```
 
-The cloud installer uses `POSTGRES_ADMIN_URL` to create the five demo logins and build the schema. `POSTGRES_DEMO_PASSWORD` is assigned to those demo roles. Only run it on a new or intentionally reset project database. `-Fresh` drops every object in the target `public` schema before reinstalling.
+The cloud installer uses `POSTGRES_ADMIN_URL` (or `DATABASE_URL_UNPOOLED`) to create the five demo logins and build the schema. `POSTGRES_DEMO_PASSWORD` is assigned to those demo roles. Only run it on a new or intentionally reset project database. `-Fresh` drops every object in the target `public` schema before reinstalling.
 
-## 4. Test and start the UI
+## 5. Test and start the UI
 
 Run the database checks locally or against the cloud target:
 
@@ -73,13 +98,15 @@ ui\.venv\Scripts\python.exe ui\app.py
 
 Open `http://127.0.0.1:5000`. The app accepts `PRISON_U_ADMIN`, `PRISON_U_WARDEN`, `PRISON_U_WARDEN2`, `PRISON_U_FRONTDESK`, and `PRISON_U_AUDITOR`, using the shared `POSTGRES_DEMO_PASSWORD` configured during installation.
 
-## 5. Backup and security notes
+Check the Function health endpoint at `https://<NEON_BRANCH_ID>-hello<NEON_FUNCTION_HOST_SUFFIX>/health`. After the database schema is installed, sign in to the UI to verify dashboard queries and live visits; an administrator can use **Test private object storage** to verify a private bucket round trip.
+
+## 6. Backup and security notes
 
 - Use the provider's dashboard to review its current backup, restore, network and free-tier policies. Do not claim Oracle Flashback or Oracle backup behavior for PostgreSQL.
 - For a portable backup, use `pg_dump` and test restoring it into a separate database before relying on it. Do not test destructive restores against the only copy.
 - Store owner and demo passwords only in `.env` or a password manager. Never expose the owner URL to the browser or commit it.
 - The UI is configured for localhost demonstration. Public hosting requires HTTPS, a production WSGI server, secret management and persistent session storage.
 
-## 6. Legacy Oracle guide
+## 7. Legacy Oracle guide
 
 The former Oracle instructions are retained at [Oracle_Cloud_Setup_Legacy.md](Oracle_Cloud_Setup_Legacy.md); do not use them to deploy the active PostgreSQL version.

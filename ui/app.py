@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
+import boto3
 import psycopg
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, session
 
@@ -119,11 +127,11 @@ def create_app() -> Flask:
     registry = SessionRegistry()
 
     def database_configured() -> bool:
-        return bool(os.environ.get("POSTGRES_URL"))
+        return bool(os.environ.get("POSTGRES_URL") or os.environ.get("DATABASE_URL"))
 
     def connect(username: str, password: str) -> Any:
         return psycopg.connect(
-            os.environ["POSTGRES_URL"],
+            os.environ.get("POSTGRES_URL") or os.environ["DATABASE_URL"],
             user=username.lower(),
             password=password,
             connect_timeout=10,
@@ -164,12 +172,25 @@ def create_app() -> Flask:
 
     @app.after_request
     def security_headers(response: Any) -> Any:
+        connect_sources = ["'self'"]
+        realtime_url = os.environ.get("NEON_REALTIME_URL", "")
+        parsed_realtime_url = urlsplit(realtime_url)
+        if (
+            parsed_realtime_url.scheme in {"https", "wss"}
+            and parsed_realtime_url.netloc
+            and not parsed_realtime_url.username
+            and not parsed_realtime_url.password
+        ):
+            connect_sources.extend(
+                (f"https://{parsed_realtime_url.netloc}", f"wss://{parsed_realtime_url.netloc}")
+            )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; style-src 'self'; script-src 'self'; "
-            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+            f"img-src 'self' data:; connect-src {' '.join(connect_sources)}; "
+            "frame-ancestors 'none'"
         )
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -181,6 +202,22 @@ def create_app() -> Flask:
     @app.get("/api/health")
     def health() -> Any:
         return jsonify(configured=database_configured())
+
+    @app.get("/api/health/neon")
+    def neon_health() -> Any:
+        branch_id = os.environ.get("NEON_BRANCH_ID", "")
+        host_suffix = os.environ.get("NEON_FUNCTION_HOST_SUFFIX", "")
+        if not branch_id or not host_suffix:
+            return jsonify(configured=False), 200
+        url = f"https://{branch_id}-hello{host_suffix}/health"
+        try:
+            with urlopen(url, timeout=10) as response:
+                status = response.status
+                payload = json.loads(response.read())
+            return jsonify(configured=True, status=status, service=payload)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
+            app.logger.exception("Neon Function health check failed")
+            return jsonify(configured=True, error="Neon Function health check failed"), 503
 
     @app.post("/api/login")
     def login() -> Any:
@@ -270,6 +307,87 @@ def create_app() -> Flask:
         except psycopg.Error:
             app.logger.exception("Dashboard query failed for %s", db_session.username)
             return jsonify(error="Could not load dashboard data. Check database grants and connection."), 503
+
+    @app.post("/api/realtime/visits")
+    def realtime_visits() -> Any:
+        db_session, error = require_session()
+        if error:
+            return error
+
+        branch_id = os.environ.get("NEON_BRANCH_ID", "")
+        host_suffix = os.environ.get("NEON_FUNCTION_HOST_SUFFIX", "")
+        realtime_url = os.environ.get("NEON_REALTIME_URL", "")
+        service_key = os.environ.get("PRISON_APP_API_KEY", "")
+        if not all((branch_id, host_suffix, realtime_url, service_key)):
+            return jsonify(error="Neon Realtime is not configured on this branch."), 503
+
+        endpoint = f"https://{branch_id}-hello{host_suffix}/api/realtime/visits"
+        body = json.dumps(
+            {"username": db_session.username.lower(), "visitDate": date.today().isoformat()}
+        ).encode("utf-8")
+        function_request = Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Prison-App-Key": service_key,
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(function_request, timeout=10) as response:
+                sealed_query = json.load(response)["query"]
+            return jsonify(url=realtime_url, query=sealed_query)
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, KeyError):
+            app.logger.exception("Could not request a scoped Neon Realtime query")
+            return jsonify(error="Could not connect live visit updates."), 503
+
+    @app.post("/api/storage/check")
+    def storage_check() -> Any:
+        db_session, error = require_session()
+        if error:
+            return error
+        if db_session.role != "admin":
+            return jsonify(error="Private storage checks are available to administrators only."), 403
+
+        endpoint = os.environ.get("AWS_ENDPOINT_URL_S3", "")
+        region = os.environ.get("AWS_REGION", "")
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        if not all((endpoint, region, access_key, secret_key)):
+            return jsonify(error="Neon private object storage is not configured."), 503
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=region,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(s3={"addressing_style": "path"}),
+        )
+        key = f"health-check/{uuid.uuid4().hex}.txt"
+        payload = b"Prison Manager private storage connectivity check."
+        uploaded = False
+        try:
+            client.put_object(Bucket="uploads", Key=key, Body=payload, ContentType="text/plain")
+            uploaded = True
+            result = client.get_object(Bucket="uploads", Key=key)
+            with result["Body"] as body:
+                downloaded = body.read()
+            if downloaded != payload:
+                raise RuntimeError("Storage round-trip content did not match.")
+            client.delete_object(Bucket="uploads", Key=key)
+            uploaded = False
+            return jsonify(ok=True, message="Private object storage upload, download, and cleanup passed.")
+        except (BotoCoreError, ClientError, RuntimeError):
+            app.logger.exception("Neon private storage round-trip failed")
+            return jsonify(error="Private storage check failed."), 503
+        finally:
+            if uploaded:
+                try:
+                    client.delete_object(Bucket="uploads", Key=key)
+                except (BotoCoreError, ClientError):
+                    app.logger.exception("Could not clean up the private storage health-check object")
 
     @app.get("/api/inmates")
     def inmates() -> Any:

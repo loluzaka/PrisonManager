@@ -7,7 +7,15 @@ if (-not (Test-Path $envFile)) { throw 'Copy .env.example to .env and configure 
 
 $settings = @{}
 Get-Content $envFile | ForEach-Object {
-    if ($_ -match '^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$') { $settings[$Matches[1]] = $Matches[2] }
+    if ($_ -match '^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$') {
+        $key = $Matches[1]
+        $value = $Matches[2]
+        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+            ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $settings[$key] = $value
+    }
 }
 $name = if ($settings['POSTGRES_CONTAINER']) { $settings['POSTGRES_CONTAINER'] } else { 'prison-postgres' }
 $database = if ($settings['POSTGRES_DB']) { $settings['POSTGRES_DB'] } else { 'prison_db' }
@@ -18,11 +26,13 @@ if (-not $demoPassword -or $demoPassword -like 'change_me*') {
 if ($Cloud) {
     $connectionUrl = $settings['POSTGRES_URL']
     $adminUrl = $settings['POSTGRES_ADMIN_URL']
+    if (-not $connectionUrl) { $connectionUrl = $settings['DATABASE_URL'] }
+    if (-not $adminUrl) { $adminUrl = $settings['DATABASE_URL_UNPOOLED'] }
     if (-not $adminUrl -or $adminUrl -notmatch '^postgres(ql)?://') {
-        throw 'Set POSTGRES_ADMIN_URL to your provider owner connection URL in .env.'
+        throw 'Set POSTGRES_ADMIN_URL or DATABASE_URL_UNPOOLED to your provider owner connection URL in .env.'
     }
     if (-not $connectionUrl -or $connectionUrl -notmatch '^postgres(ql)?://') {
-        throw 'Set POSTGRES_URL to your provider endpoint URL in .env.'
+        throw 'Set POSTGRES_URL or DATABASE_URL to your provider endpoint URL in .env.'
     }
     $adminArgs = @('--dbname', $adminUrl)
 } else {

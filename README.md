@@ -26,7 +26,7 @@ they hold no matter which program or person touches the data, and keeps a tamper
 | Purpose | Tool |
 |---|---|
 | Local database | PostgreSQL 17 in Docker (`postgres:17-alpine`) |
-| Cloud target | Neon PostgreSQL free tier (optional; configure your own database URL) |
+| Cloud target | Neon PostgreSQL |
 | Client | `psql` in the PostgreSQL Docker container; any PostgreSQL client also works |
 | Python driver | psycopg 3 |
 | Automation | PowerShell scripts in `scripts/` |
@@ -34,7 +34,7 @@ they hold no matter which program or person touches the data, and keeps a tamper
 ## 4. Current PostgreSQL status
 The PostgreSQL port currently builds 11 tables, 17 views, business functions, triggers, role grants, explicit cursor procedures, and synthetic seed data. Its current database checks and remaining migration work are tracked in [Documentation/Feature_Traceability.md](Documentation/Feature_Traceability.md).
 
-**Validation status:** the latest PostgreSQL install passed 23 database checks and all five role checks locally. The UI smoke tests and live local PostgreSQL integration checks passed. The previous 191-check log is an Oracle-only historical run; it is not evidence that the PostgreSQL port has equivalent feature coverage. A live Neon deployment has not been configured.
+**Validation status:** the latest local PostgreSQL install passed 23 database checks and all five role checks. The Flask unit tests pass. Neon Functions and private Object Storage are provisioned and their live health/storage checks pass. The production branch still needs the PostgreSQL schema and demo roles installed; the current environment cannot reach its public PostgreSQL endpoint on port 5432. The previous 191-check log is an Oracle-only historical run.
 
 ## 5. Repository layout
 ```
@@ -80,16 +80,18 @@ cd C:\Users\Huzaifa\Documents\PrisonManagement
 
 The installer and test runner use `psql` inside the container. PostgreSQL seed data is synthetic and can be rebuilt with `-Fresh`.
 
-## 8. Setup – cloud database
-Create a PostgreSQL database with a provider such as Neon, put its owner connection URL in `POSTGRES_ADMIN_URL`, and set the credential-free host/database URL in `POSTGRES_URL`. Then run:
+## 8. Setup – Neon cloud database
+Configure `.env` with `neon env pull`. Run `npm.cmd install` and `npm.cmd run build`, then apply `neon.ts` with `neon deploy --env .env`. Keep the server-only Function key and database role password in the ignored `.env`.
+
+Install the schema and test the cloud database:
 
 ```powershell
-.\scripts\start_postgres.ps1        # local container also supplies the psql client
+.\scripts\start_postgres.ps1        # local PostgreSQL container supplies psql
 .\scripts\install_postgres.ps1 -Cloud
 .\scripts\run_postgres_tests.ps1 -Cloud
 ```
 
-See [Documentation/Cloud_Setup.md](Documentation/Cloud_Setup.md) before deploying. It is not yet a verified live cloud deployment.
+The installer uses `DATABASE_URL_UNPOOLED` for DDL and `POSTGRES_DEMO_PASSWORD` for the five role accounts. See [Documentation/Cloud_Setup.md](Documentation/Cloud_Setup.md) for service wiring and verification.
 
 The original Oracle design documents and scripts remain as references; Oracle-specific features such as `DBMS_SCHEDULER`, `FLASHBACK TABLE`, and `PIVOT` have not all been replaced with PostgreSQL equivalents yet.
 
